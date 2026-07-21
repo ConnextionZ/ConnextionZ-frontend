@@ -678,6 +678,9 @@ function BottomNav({ active, onNav }: { active: string; onNav: (id: string) => v
 
 // ─── APP ──────────────────────────────────────────────────────────────────────
 
+// Full-screen app surface — fills the whole viewport edge-to-edge on every screen size.
+const FRAME = "relative overflow-hidden w-full h-full";
+
 export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [isDark, setIsDark] = useState(true);
@@ -727,8 +730,8 @@ export default function App() {
   if (!isLoggedIn) {
     return (
       <ThemeContext.Provider value={true}>
-        <div className="h-screen w-full flex items-center justify-center overflow-hidden" style={{ background: "#000" }}>
-          <div className="relative overflow-hidden bg-black" style={{ width: "100%", maxWidth: 430, height: "100%", maxHeight: "100dvh" }}>
+        <div className="h-[100dvh] w-full overflow-hidden" style={{ background: "#000" }}>
+          <div className={`${FRAME} bg-black`}>
             <AuthFlow onAuthenticated={() => setIsLoggedIn(true)} />
           </div>
         </div>
@@ -739,12 +742,12 @@ export default function App() {
   return (
     <ThemeContext.Provider value={isDark}>
       <div
-        className={`h-screen w-full flex items-center justify-center overflow-hidden${isDark ? " dark" : ""}`}
-        style={{ background: isDark ? "#000" : "#d4dbe8", fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif" }}
+        className={`h-[100dvh] w-full overflow-hidden${isDark ? " dark" : ""}`}
+        style={{ background: isDark ? "#000" : "#f2f5fb", fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif" }}
       >
         <div
-          className="relative overflow-hidden"
-          style={{ width: "100%", maxWidth: 430, height: "100%", maxHeight: "100dvh", background: isDark ? "#000" : "#f2f5fb" }}
+          className={FRAME}
+          style={{ background: isDark ? "#000" : "#f2f5fb" }}
           onTouchStart={(e) => { touchStartY.current = e.touches[0].clientY; }}
           onTouchEnd={(e) => { const d = touchStartY.current - e.changedTouches[0].clientY; if (Math.abs(d) > 45) d > 0 ? goNext() : goPrev(); }}
           onWheel={handleWheel}
@@ -846,6 +849,7 @@ export default function App() {
             {screen === "profile" && (
               <motion.div key="settings" initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }} transition={{ type: "spring", damping: 34, stiffness: 300 }}>
                 <SettingsScreen
+                  onBack={() => setScreen("feed")}
                   onLogout={handleLogout}
                   onDeleteProfile={() => setShowDeleteModal(true)}
                   isDark={isDark}

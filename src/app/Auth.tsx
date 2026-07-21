@@ -866,9 +866,9 @@ export function DeleteProfileModal({ onDeleted, onCancel }: { onDeleted: () => v
 // ─── SETTINGS SCREEN ─────────────────────────────────────────────────────────
 
 export function SettingsScreen({
-  onLogout, onDeleteProfile, isDark = true, onToggleTheme,
+  onBack, onLogout, onDeleteProfile, isDark = true, onToggleTheme,
 }: {
-  onLogout: () => void; onDeleteProfile: () => void;
+  onBack: () => void; onLogout: () => void; onDeleteProfile: () => void;
   isDark?: boolean; onToggleTheme?: () => void;
 }) {
   const bg = isDark
@@ -889,7 +889,14 @@ export function SettingsScreen({
   return (
     <div className="absolute inset-0 z-20 overflow-y-auto" style={{ background: bg }}>
       <div className="px-5 pt-14 pb-10">
-        <h1 className="font-extrabold text-[26px] mb-6" style={{ color: heading }}>Settings</h1>
+        <div className="flex items-center gap-3 mb-6">
+          <button onClick={onBack} aria-label="Back"
+            className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 transition-opacity active:opacity-70"
+            style={{ background: isDark ? "rgba(0,60,130,0.35)" : "rgba(0,130,240,0.08)", border: cardBorder }}>
+            <ArrowLeft className="w-4 h-4" style={{ color: heading }} />
+          </button>
+          <h1 className="font-extrabold text-[26px]" style={{ color: heading }}>Settings</h1>
+        </div>
 
         {/* Profile card */}
         <div className="flex items-center gap-4 p-4 rounded-2xl mb-6" style={{ background: cardBg, border: cardBorder }}>
