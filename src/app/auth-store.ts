@@ -38,6 +38,23 @@
 
 export type Provider = "google" | "apple";
 
+/**
+ * The public creator identity. Seeded from onboarding and edited from
+ * Settings → Edit Profile. Kept separate from the credential fields so a real
+ * backend can serve it from a `/me` endpoint without touching auth.
+ */
+export interface Profile {
+  /** Handle shown as @username across the feed, inbox and settings. */
+  username: string;
+  /** Display name — falls back to "First Last" when never customised. */
+  displayName: string;
+  bio: string;
+  /** Hex used for the generated avatar, picked during onboarding. */
+  avatarColor: string;
+  location: string;
+  website: string;
+}
+
 export interface Account {
   firstName: string;
   lastName: string;
@@ -46,6 +63,8 @@ export interface Account {
   password?: string;
   /** Providers linked to this account, in addition to any password. */
   providers: Provider[];
+  /** Absent until onboarding or Edit Profile fills it in. */
+  profile?: Profile;
 }
 
 export type Result<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -59,6 +78,7 @@ interface ResetToken {
 
 const ACCOUNTS_KEY = "connextionz.accounts";
 const RESETS_KEY = "connextionz.resets";
+const SESSION_KEY = "connextionz.session";
 
 /** Matches the "expires in 15 minutes" copy shown on the Reset Sent screen. */
 export const RESET_TTL_MS = 15 * 60 * 1000;
@@ -72,7 +92,34 @@ export const DEMO_ACCOUNT: Account = {
   email: "demo@connextionz.app",
   password: "collab2026",
   providers: [],
+  profile: {
+    username: "maya.creates",
+    displayName: "Maya Chen",
+    bio: "Producer & visual creator. Always down for a studio session 🎧",
+    avatarColor: "#00AEEF",
+    location: "Los Angeles, CA",
+    website: "connextionz.app/maya",
+  },
 };
+
+/** A handle derived from the email local part — "maya.chen@x.com" → "maya.chen". */
+const handleFromEmail = (email: string) =>
+  normalize(email).split("@")[0].replace(/[^a-z0-9._]/g, "") || "creator";
+
+/** Fills in a profile for accounts that predate one (or skipped onboarding). */
+export function defaultProfile(account: Account): Profile {
+  return {
+    username: handleFromEmail(account.email),
+    displayName: `${account.firstName} ${account.lastName}`.trim() || handleFromEmail(account.email),
+    bio: "",
+    avatarColor: "#00AEEF",
+    location: "",
+    website: "",
+  };
+}
+
+/** Always returns a profile, materialising the default when none was stored. */
+export const profileOf = (account: Account): Profile => account.profile ?? defaultProfile(account);
 
 const normalize = (email: string) => email.trim().toLowerCase();
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -255,4 +302,118 @@ export async function resetPassword(token: string, newPassword: string): Promise
   if (entry) { entry.usedAt = Date.now(); saveResets(resets); }
 
   return { ok: true, value: account };
+}
+
+// ─── SESSION ─────────────────────────────────────────────────────────────────
+//
+// Only the email is persisted; the account is re-read on every access so a
+// profile edit in one tab is never served stale from a cached copy. A real
+// backend swaps this for an httpOnly session cookie — `getSession()` becomes
+// `GET /me` and the rest of the app is unchanged.
+
+/** The signed-in account, or null when signed out / the account is gone. */
+export function getSession(): Account | null {
+  const email = read<string | null>(SESSION_KEY, null);
+  if (!email || typeof email !== "string") return null;
+  return findAccount(loadAccounts(), email) ?? null;
+}
+
+export function startSession(email: string) {
+  write(SESSION_KEY, normalize(email));
+}
+
+export function endSession() {
+  try {
+    localStorage.removeItem(SESSION_KEY);
+  } catch {
+    /* Storage disabled — nothing was persisted to clear. */
+  }
+}
+
+// ─── PROFILE ─────────────────────────────────────────────────────────────────
+
+/**
+ * Applies a partial profile edit. Username uniqueness is enforced here because
+ * handles are how creators address each other across the app.
+ */
+export async function updateProfile(
+  email: string,
+  patch: Partial<Profile>,
+): Promise<Result<Account>> {
+  await delay(700);
+  const accounts = loadAccounts();
+  const account = findAccount(accounts, email);
+  if (!account) return { ok: false, error: "That account no longer exists." };
+
+  const next: Profile = { ...profileOf(account), ...patch };
+  next.username = next.username.trim().replace(/^@/, "").toLowerCase();
+
+  if (!next.username) return { ok: false, error: "Pick a username." };
+  if (!/^[a-z0-9._]{3,24}$/.test(next.username)) {
+    return { ok: false, error: "Usernames are 3–24 characters: letters, numbers, dots and underscores." };
+  }
+  const taken = accounts.some(
+    (a) => normalize(a.email) !== normalize(email) && a.profile?.username === next.username,
+  );
+  if (taken) return { ok: false, error: "That username is already taken." };
+
+  account.profile = next;
+  saveAccounts(accounts);
+  return { ok: true, value: account };
+}
+
+// ─── PASSWORD CHANGE ─────────────────────────────────────────────────────────
+
+/**
+ * Changes a password from inside the app, where the user is already
+ * authenticated. `current` is still required — it stops someone on an unlocked
+ * device from locking the owner out — except on provider-only accounts, which
+ * have no password to confirm and are instead *setting* their first one.
+ */
+export async function changePassword(
+  email: string,
+  current: string,
+  next: string,
+): Promise<Result<Account>> {
+  await delay(900);
+  const accounts = loadAccounts();
+  const account = findAccount(accounts, email);
+  if (!account) return { ok: false, error: "That account no longer exists." };
+
+  if (account.password !== undefined && account.password !== current) {
+    return { ok: false, error: "Your current password is incorrect." };
+  }
+  if (next.length < 8) return { ok: false, error: "Password must be at least 8 characters." };
+  if (account.password === next) {
+    return { ok: false, error: "Choose a password you have not used before." };
+  }
+
+  account.password = next;
+  saveAccounts(accounts);
+
+  // Any outstanding reset link is now stale — a password change should
+  // invalidate links mailed before it, exactly as a real backend would.
+  saveResets(loadResets().filter((t) => t.email !== normalize(email)));
+  return { ok: true, value: account };
+}
+
+/** Whether this account is setting a first password rather than changing one. */
+export const hasPassword = (account: Account) => account.password !== undefined;
+
+// ─── ACCOUNT DELETION ────────────────────────────────────────────────────────
+
+/**
+ * Removes the account and everything keyed to it, then ends the session.
+ * Note: `loadAccounts()` re-seeds `DEMO_ACCOUNT`, so deleting the demo login
+ * clears its data but keeps the prototype signable-in — deliberate, since
+ * otherwise one tester could lock everyone out of the demo.
+ */
+export async function deleteAccount(email: string): Promise<Result<null>> {
+  await delay(1400);
+  const accounts = loadAccounts();
+  const remaining = accounts.filter((a) => normalize(a.email) !== normalize(email));
+  saveAccounts(remaining);
+  saveResets(loadResets().filter((t) => t.email !== normalize(email)));
+  endSession();
+  return { ok: true, value: null };
 }
