@@ -1,16 +1,18 @@
-import { useState, useCallback } from "react";
+import { useCallback, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Eye, EyeOff, Mail, Lock, User, ArrowRight, ArrowLeft,
-  Check, Loader2, AlertCircle, Info, X, ChevronRight, Zap,
+  Check, Loader2, AlertCircle, Info, Zap,
   Music, Activity, MapPin, Coffee, Pen, Cpu, Gamepad2,
-  Star, TrendingUp, Mic, Users, Briefcase, Clock,
+  Star, TrendingUp, Mic, Users, Briefcase,
 } from "lucide-react";
 import {
   signIn, register, signInWithProvider,
   requestPasswordReset, verifyResetToken, resetPassword,
-  DEMO_ACCOUNT, PROVIDER_LABEL, type Provider,
+  updateProfile, profileOf, startSession,
+  DEMO_ACCOUNT, PROVIDER_LABEL, type Provider, type Account,
 } from "./auth-store";
+import { loadPreferences, savePreferences } from "./settings-store";
 
 // ─── TYPES ───────────────────────────────────────────────────────────────────
 
@@ -536,7 +538,7 @@ function GetStartedHero({ onGetStarted, onLogin }: { onGetStarted: () => void; o
 
 function Login({
   onLogin, onCreate, onForgot, onBack,
-}: { onLogin: () => void; onCreate: () => void; onForgot: () => void; onBack: () => void }) {
+}: { onLogin: (account: Account) => void; onCreate: () => void; onForgot: () => void; onBack: () => void }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPw, setShowPw] = useState(false);
@@ -562,7 +564,7 @@ function Login({
 
     // Only authenticate when the credentials actually match.
     if (!result.ok) { setErrors({ general: result.error }); return; }
-    onLogin();
+    onLogin(result.value);
   };
 
   /** Clear the "incorrect credentials" banner as soon as the user edits either field. */
@@ -578,7 +580,7 @@ function Login({
     const result = await signInWithProvider(provider, identity);
     setProviderBusy(null);
     if (!result.ok) { setErrors({ general: result.error }); return; }
-    onLogin();
+    onLogin(result.value);
   };
 
   return (
@@ -673,7 +675,7 @@ function Login({
 
 // ─── CREATE ACCOUNT ──────────────────────────────────────────────────────────
 
-function CreateAccount({ onCreated, onLogin, onBack }: { onCreated: () => void; onLogin: () => void; onBack: () => void }) {
+function CreateAccount({ onCreated, onLogin, onBack }: { onCreated: (account: Account) => void; onLogin: () => void; onBack: () => void }) {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
@@ -705,7 +707,7 @@ function CreateAccount({ onCreated, onLogin, onBack }: { onCreated: () => void; 
 
     // Surface duplicate-email rejections instead of silently continuing.
     if (!result.ok) { setErrors({ general: result.error }); return; }
-    onCreated();
+    onCreated(result.value);
   };
 
   const pwStrength = password.length === 0 ? 0 : password.length < 8 ? 1 : password.length < 12 ? 2 : 3;
@@ -1108,7 +1110,17 @@ const COLLAB_TYPES_ONB = [
 const AVATAR_COLORS = ["#a78bfa", "#22c55e", "#00AEEF", "#f59e0b", "#f472b6", "#ef4444"];
 const RESPONSE_TIMES = ["< 1 hour", "< 4 hours", "< 24 hours"];
 
-function Onboarding({ onDone }: { onDone: () => void }) {
+/** What onboarding collects. `null` when the user skipped it. */
+export interface OnboardingSetup {
+  categories: string[];
+  collabTypes: string[];
+  avatarColor: string;
+  creatorName: string;
+  openToCollab: boolean;
+  responseTime: string;
+}
+
+function Onboarding({ onDone }: { onDone: (setup: OnboardingSetup | null) => void }) {
   const [step, setStep] = useState<OnbStep>(1);
   const [selectedCats, setSelectedCats] = useState<string[]>([]);
   const [selectedCollabs, setSelectedCollabs] = useState<string[]>([]);
@@ -1122,12 +1134,22 @@ function Onboarding({ onDone }: { onDone: () => void }) {
 
   const canContinue = step === 1 ? selectedCats.length > 0 : step === 2 ? selectedCollabs.length > 0 : !!creatorName.trim();
 
+  /** Everything picked here seeds the profile and Settings, rather than being discarded. */
+  const finish = () => onDone({
+    categories: selectedCats,
+    collabTypes: selectedCollabs,
+    avatarColor,
+    creatorName: creatorName.trim(),
+    openToCollab,
+    responseTime,
+  });
+
   return (
     <div className={SCREEN}>
       {/* Header */}
       <div className="flex items-center justify-between px-6 pt-12 pb-4 lg:px-0 lg:pt-0">
         <span className="lg:hidden"><Logo size="sm" /></span>
-        <button onClick={onDone} className="text-white/40 text-[14px] font-semibold lg:ml-auto">Skip</button>
+        <button onClick={() => onDone(null)} className="text-white/40 text-[14px] font-semibold lg:ml-auto">Skip</button>
       </div>
 
       {/* Step dots */}
@@ -1274,7 +1296,7 @@ function Onboarding({ onDone }: { onDone: () => void }) {
             ? <PrimaryBtn onClick={() => canContinue && setStep((s) => (s + 1) as OnbStep)} disabled={!canContinue}>
                 Continue <ArrowRight className="w-5 h-5" />
               </PrimaryBtn>
-            : <PrimaryBtn onClick={onDone} disabled={!canContinue}>
+            : <PrimaryBtn onClick={finish} disabled={!canContinue}>
                 Start Exploring <Zap className="w-5 h-5" />
               </PrimaryBtn>
           }
@@ -1284,210 +1306,45 @@ function Onboarding({ onDone }: { onDone: () => void }) {
   );
 }
 
-// ─── DELETE PROFILE (Settings screen component) ───────────────────────────────
-
-export function DeleteProfileModal({ onDeleted, onCancel }: { onDeleted: () => void; onCancel: () => void }) {
-  const [confirm, setConfirm] = useState(false);
-  const [typed, setTyped] = useState("");
-  const [loading, setLoading] = useState(false);
-
-  const handleDelete = async () => {
-    setLoading(true);
-    await new Promise((r) => setTimeout(r, 1400));
-    setLoading(false);
-    onDeleted();
-  };
-
-  if (!confirm) {
-    return (
-      <motion.div initial={{ opacity: 0, y: 40 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 40 }}
-        className="absolute inset-x-4 bottom-4 top-4 rounded-3xl z-50 flex flex-col overflow-hidden"
-        style={{ background: "linear-gradient(160deg,#00091e,#000d28)", border: "1px solid rgba(0,174,239,0.2)", boxShadow: "0 -20px 60px rgba(0,0,0,0.8)" }}>
-        {/* Handle */}
-        <div className="flex justify-center pt-3 pb-1 flex-shrink-0"><div className="w-9 h-1 rounded-full bg-white/20" /></div>
-
-        <div className="flex-1 overflow-y-auto px-6 pb-8 pt-4 space-y-6">
-          {/* Warning icon */}
-          <div className="flex flex-col items-center text-center space-y-4 pt-4">
-            <div className="w-20 h-20 rounded-full flex items-center justify-center" style={{ background: "rgba(239,68,68,0.12)", border: "2px solid rgba(239,68,68,0.3)" }}>
-              <AlertCircle className="w-9 h-9 text-red-400" />
-            </div>
-            <div>
-              <h2 className="text-white font-extrabold text-[24px]">Delete Profile?</h2>
-              <p className="text-white/50 text-[14px] mt-2 leading-relaxed">This action is permanent and cannot be undone.</p>
-            </div>
-          </div>
-
-          {/* What gets deleted */}
-          <div className="rounded-2xl p-4 space-y-3" style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)" }}>
-            <p className="text-red-400 text-[12px] font-bold uppercase tracking-widest">What will be deleted</p>
-            {["Your profile and creator identity", "All collaboration history", "Messages and conversations", "Saved sounds and content", "Collab Score and reviews"].map((item) => (
-              <div key={item} className="flex items-center gap-3">
-                <X className="w-3.5 h-3.5 text-red-400 flex-shrink-0" />
-                <span className="text-white/65 text-[13px]">{item}</span>
-              </div>
-            ))}
-          </div>
-
-          <div className="flex gap-3 pt-2">
-            <motion.button whileTap={{ scale: 0.97 }} onClick={onCancel}
-              className="flex-1 py-4 rounded-full font-bold text-[15px] text-white/80"
-              style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.12)" }}>
-              Cancel
-            </motion.button>
-            <motion.button whileTap={{ scale: 0.97 }} onClick={() => setConfirm(true)}
-              className="flex-1 py-4 rounded-full font-bold text-[15px] text-white"
-              style={{ background: "rgba(239,68,68,0.2)", border: "1px solid rgba(239,68,68,0.4)" }}>
-              Continue
-            </motion.button>
-          </div>
-        </div>
-      </motion.div>
-    );
-  }
-
-  // Confirmation step
-  return (
-    <motion.div initial={{ opacity: 0, y: 40 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 40 }}
-      className="absolute inset-x-4 bottom-4 rounded-3xl z-50 overflow-hidden"
-      style={{ background: "#16161a", border: "1px solid rgba(239,68,68,0.3)", boxShadow: "0 -20px 60px rgba(0,0,0,0.8)" }}>
-      <div className="px-6 pt-6 pb-8 space-y-5">
-        <div className="text-center space-y-2">
-          <h2 className="text-white font-extrabold text-[22px]">Final confirmation</h2>
-          <p className="text-white/45 text-[13px]">Type <span className="font-bold text-red-400">DELETE</span> to confirm</p>
-        </div>
-        <input value={typed} onChange={(e) => setTyped(e.target.value)} placeholder="Type DELETE here"
-          className="w-full rounded-2xl text-white text-[15px] outline-none placeholder:text-white/20 px-4 py-3.5 text-center"
-          style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.3)" }} />
-        <div className="flex gap-3">
-          <motion.button whileTap={{ scale: 0.97 }} onClick={() => setConfirm(false)}
-            className="flex-1 py-3.5 rounded-full font-bold text-[14px] text-white/70"
-            style={{ background: "rgba(0,60,130,0.35)", border: "1px solid rgba(0,174,239,0.15)" }}>
-            Back
-          </motion.button>
-          <motion.button whileTap={{ scale: 0.97 }} onClick={handleDelete} disabled={typed !== "DELETE" || loading}
-            className="flex-1 py-3.5 rounded-full font-bold text-[14px] text-white flex items-center justify-center gap-2"
-            style={{ background: typed === "DELETE" ? "rgba(239,68,68,0.85)" : "rgba(239,68,68,0.15)", opacity: loading ? 0.8 : 1 }}>
-            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Delete Profile"}
-          </motion.button>
-        </div>
-      </div>
-    </motion.div>
-  );
-}
-
-// ─── SETTINGS SCREEN ─────────────────────────────────────────────────────────
-
-export function SettingsScreen({
-  onBack, onLogout, onDeleteProfile, isDark = true, onToggleTheme,
-}: {
-  onBack: () => void; onLogout: () => void; onDeleteProfile: () => void;
-  isDark?: boolean; onToggleTheme?: () => void;
-}) {
-  const bg = isDark
-    ? "linear-gradient(160deg,#00091e 0%,#000d28 100%)"
-    : "linear-gradient(160deg,#f2f5fb 0%,#eaf1fc 100%)";
-  const heading = isDark ? "#fff" : "#0a0e1a";
-  const cardBg = isDark ? "rgba(0,40,100,0.35)" : "rgba(0,130,240,0.07)";
-  const cardBorder = isDark ? "1px solid rgba(0,174,239,0.18)" : "1px solid rgba(0,174,239,0.15)";
-  const sectionLbl = isDark ? "rgba(255,255,255,0.35)" : "rgba(10,14,26,0.4)";
-  const groupBg = isDark ? "rgba(0,30,80,0.4)" : "#ffffff";
-  const groupBorder = isDark ? "1px solid rgba(0,174,239,0.15)" : "1px solid rgba(0,0,0,0.08)";
-  const rowText = isDark ? "#fff" : "#0a0e1a";
-  const rowDivider = isDark ? "rgba(0,174,239,0.1)" : "rgba(0,0,0,0.06)";
-  const chevronColor = isDark ? "rgba(255,255,255,0.25)" : "rgba(10,14,26,0.25)";
-  const subText = isDark ? "rgba(255,255,255,0.4)" : "rgba(10,14,26,0.4)";
-  const versionColor = isDark ? "rgba(255,255,255,0.2)" : "rgba(10,14,26,0.25)";
-
-  return (
-    <div className="absolute inset-0 z-20 overflow-y-auto" style={{ background: bg }}>
-      <div className="px-5 pt-14 pb-10">
-        <div className="flex items-center gap-3 mb-6">
-          <button onClick={onBack} aria-label="Back"
-            className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 transition-opacity active:opacity-70"
-            style={{ background: isDark ? "rgba(0,60,130,0.35)" : "rgba(0,130,240,0.08)", border: cardBorder }}>
-            <ArrowLeft className="w-4 h-4" style={{ color: heading }} />
-          </button>
-          <h1 className="font-extrabold text-[26px]" style={{ color: heading }}>Settings</h1>
-        </div>
-
-        {/* Profile card */}
-        <div className="flex items-center gap-4 p-4 rounded-2xl mb-6" style={{ background: cardBg, border: cardBorder }}>
-          <div className="w-14 h-14 rounded-full flex items-center justify-center text-white text-xl font-bold" style={{ background: "linear-gradient(135deg,#00AEEF,#0077cc)" }}>Y</div>
-          <div>
-            <p className="font-bold text-[16px]" style={{ color: heading }}>you.creates</p>
-            <p className="text-[13px]" style={{ color: subText }}>you@example.com</p>
-          </div>
-        </div>
-
-        {/* Appearance toggle */}
-        <div className="mb-5">
-          <p className="text-[11px] font-bold uppercase tracking-widest mb-2 px-1" style={{ color: sectionLbl }}>Appearance</p>
-          <div className="rounded-2xl overflow-hidden" style={{ background: groupBg, border: groupBorder }}>
-            <button onClick={onToggleTheme} className="w-full flex items-center justify-between px-4 py-4 text-left">
-              <div className="flex items-center gap-3">
-                <span className="text-lg">{isDark ? "🌙" : "☀️"}</span>
-                <span className="text-[14px]" style={{ color: rowText }}>{isDark ? "Dark Mode" : "Light Mode"}</span>
-              </div>
-              <div className="w-12 h-6 rounded-full relative transition-colors flex-shrink-0"
-                style={{ background: isDark ? "#00AEEF" : "rgba(0,0,0,0.15)" }}>
-                <motion.div animate={{ x: isDark ? 24 : 2 }} transition={{ type: "spring", damping: 20 }}
-                  className="absolute top-1 w-4 h-4 rounded-full bg-white shadow-sm" style={{ left: 0 }} />
-              </div>
-            </button>
-          </div>
-        </div>
-
-        {/* Sections */}
-        {[
-          { title: "Account", items: ["Edit Profile", "Change Password", "Notification Preferences", "Privacy Settings"] },
-          { title: "Creator", items: ["Collab Preferences", "Response Time", "Portfolio", "Analytics"] },
-          { title: "Support", items: ["Help Center", "Report a Problem", "Terms of Service", "Privacy Policy"] },
-        ].map((sec) => (
-          <div key={sec.title} className="mb-5">
-            <p className="text-[11px] font-bold uppercase tracking-widest mb-2 px-1" style={{ color: sectionLbl }}>{sec.title}</p>
-            <div className="rounded-2xl overflow-hidden" style={{ background: groupBg, border: groupBorder }}>
-              {sec.items.map((item, i) => (
-                <button key={item} className="w-full flex items-center justify-between px-4 py-4 text-left transition-opacity active:opacity-70"
-                  style={{ borderBottom: i < sec.items.length - 1 ? `1px solid ${rowDivider}` : "none" }}>
-                  <span className="text-[14px]" style={{ color: rowText }}>{item}</span>
-                  <ChevronRight className="w-4 h-4" style={{ color: chevronColor }} />
-                </button>
-              ))}
-            </div>
-          </div>
-        ))}
-
-        {/* Logout / Delete */}
-        <div className="mb-3">
-          <div className="rounded-2xl overflow-hidden" style={{ background: groupBg, border: groupBorder }}>
-            <motion.button whileTap={{ scale: 0.98 }} onClick={onLogout}
-              className="w-full flex items-center justify-between px-4 py-4"
-              style={{ borderBottom: `1px solid ${rowDivider}` }}>
-              <span className="text-[14px]" style={{ color: rowText }}>Log Out</span>
-              <ChevronRight className="w-4 h-4" style={{ color: chevronColor }} />
-            </motion.button>
-            <motion.button whileTap={{ scale: 0.98 }} onClick={onDeleteProfile}
-              className="w-full flex items-center justify-between px-4 py-4">
-              <span className="text-red-400 text-[14px] font-semibold">Delete Profile</span>
-              <ChevronRight className="w-4 h-4 text-red-400/40" />
-            </motion.button>
-          </div>
-        </div>
-
-        <p className="text-center text-[12px] mt-6" style={{ color: versionColor }}>ConnextionZ v1.0.0</p>
-      </div>
-    </div>
-  );
-}
-
 // ─── AUTH FLOW (ROOT) ─────────────────────────────────────────────────────────
 
-export function AuthFlow({ onAuthenticated }: { onAuthenticated: () => void }) {
+export function AuthFlow({ onAuthenticated }: { onAuthenticated: (account: Account) => void }) {
   const [screen, setScreen] = useState<Screen>("getStarted");
   /** Carried between the forgot-password, reset-sent and set-password screens. */
   const [resetEmail, setResetEmail] = useState("");
   const [resetToken, setResetToken] = useState<string | null>(null);
+  /** The account being onboarded — onboarding needs somewhere to write its picks. */
+  const [pending, setPending] = useState<Account | null>(null);
+
+  /** Opens the session and hands the account to the app. */
+  const enter = useCallback((account: Account) => {
+    startSession(account.email);
+    onAuthenticated(account);
+  }, [onAuthenticated]);
+
+  /**
+   * Persists what onboarding collected before entering the app, so Settings
+   * opens already reflecting the user's picks rather than defaults.
+   */
+  const completeOnboarding = useCallback(async (setup: OnboardingSetup | null) => {
+    const account = pending;
+    if (!account) return;
+    if (!setup) { enter(account); return; }
+
+    const prefs = loadPreferences(account.email);
+    savePreferences(account.email, {
+      ...prefs,
+      categories: setup.categories,
+      responseTime: setup.responseTime,
+      collab: { ...prefs.collab, types: setup.collabTypes, openToCollab: setup.openToCollab },
+    });
+
+    const result = await updateProfile(account.email, {
+      displayName: setup.creatorName || profileOf(account).displayName,
+      avatarColor: setup.avatarColor,
+    });
+    enter(result.ok ? result.value : account);
+  }, [pending, enter]);
 
   const slide = { initial: { opacity: 0, x: 40 }, animate: { opacity: 1, x: 0 }, exit: { opacity: 0, x: -40 } };
   const slideUp = { initial: { opacity: 0, y: 40 }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0, y: 20 } };
@@ -1522,12 +1379,13 @@ export function AuthFlow({ onAuthenticated }: { onAuthenticated: () => void }) {
                   )}
                   {screen === "login" && (
                     <motion.div key="li" {...slide} transition={trans} className={pane}>
-                      <Login onLogin={onAuthenticated} onCreate={() => setScreen("createAccount")} onForgot={() => setScreen("forgotPassword")} onBack={() => setScreen("getStarted")} />
+                      <Login onLogin={enter} onCreate={() => setScreen("createAccount")} onForgot={() => setScreen("forgotPassword")} onBack={() => setScreen("getStarted")} />
                     </motion.div>
                   )}
                   {screen === "createAccount" && (
                     <motion.div key="ca" {...slide} transition={trans} className={pane}>
-                      <CreateAccount onCreated={() => setScreen("onboarding")} onLogin={() => setScreen("login")} onBack={() => setScreen("getStarted")} />
+                      <CreateAccount onCreated={(account) => { setPending(account); setScreen("onboarding"); }}
+                        onLogin={() => setScreen("login")} onBack={() => setScreen("getStarted")} />
                     </motion.div>
                   )}
                   {screen === "forgotPassword" && (
@@ -1557,7 +1415,7 @@ export function AuthFlow({ onAuthenticated }: { onAuthenticated: () => void }) {
                   )}
                   {screen === "onboarding" && (
                     <motion.div key="ob" {...slideUp} transition={trans} className={pane}>
-                      <Onboarding onDone={onAuthenticated} />
+                      <Onboarding onDone={completeOnboarding} />
                     </motion.div>
                   )}
                 </AnimatePresence>
