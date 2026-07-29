@@ -1,6 +1,8 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { TrendingSounds } from "./TrendingSounds";
-import { AuthFlow, SettingsScreen, DeleteProfileModal } from "./Auth";
+import { AuthFlow } from "./Auth";
+import { SettingsScreen, DeleteProfileModal } from "./Settings";
+import { type Account, getSession, endSession } from "./auth-store";
 import { GoLiveSetup, CreatorLiveView, ViewerLiveView, LiveBannerStrip } from "./LiveStream";
 import { InboxScreen } from "./Inbox";
 import { ThemeContext, useTheme } from "./ThemeContext";
@@ -117,6 +119,9 @@ const SEED_COMMENTS: Record<string, Comment[]> = {
     { id: "c4", username: "reel.rin", avatarUrl: "https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=60&h=60&fit=crop&auto=format", text: "Tutorial please! I'll sub twice if I have to", likes: 311, time: "4h" },
   ],
 };
+
+/** Creators the signed-in user follows — what the Following tab narrows to. */
+const FOLLOWING_IDS = ["1", "3", "5"];
 
 const fmt = (n: number) =>
   n >= 1_000_000 ? (n / 1_000_000).toFixed(1) + "M"
@@ -682,9 +687,11 @@ function BottomNav({ active, onNav }: { active: string; onNav: (id: string) => v
 const FRAME = "relative overflow-hidden w-full h-full";
 
 export default function App() {
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  // The signed-in account, restored from the persisted session on load.
+  const [account, setAccount] = useState<Account | null>(() => getSession());
   const [isDark, setIsDark] = useState(true);
   const [screen, setScreen] = useState<"feed" | "discover" | "profile" | "inbox">("feed");
+  const [feedTab, setFeedTab] = useState<"forYou" | "following">("forYou");
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [liveMode, setLiveMode] = useState<"off" | "setup" | "creator" | "viewer">("off");
   const [liveTitle, setLiveTitle] = useState("");
@@ -701,10 +708,20 @@ export default function App() {
   const [paused, setPaused] = useState(false);
   const touchStartY = useRef(0);
 
-  const video = VIDEOS[idx];
+  // The two top-bar tabs are the same feed filtered, so switching them restarts
+  // at the first video rather than leaving `idx` past the end of a shorter list.
+  const feed = feedTab === "following" ? VIDEOS.filter((v) => FOLLOWING_IDS.includes(v.id)) : VIDEOS;
+  const video = feed[Math.min(idx, feed.length - 1)];
 
-  const goNext = useCallback(() => { if (idx < VIDEOS.length - 1) { setDir(1); setIdx((i) => i + 1); } }, [idx]);
+  const goNext = useCallback(() => { if (idx < feed.length - 1) { setDir(1); setIdx((i) => i + 1); } }, [idx, feed.length]);
   const goPrev = useCallback(() => { if (idx > 0) { setDir(-1); setIdx((i) => i - 1); } }, [idx]);
+
+  const switchTab = useCallback((tab: "forYou" | "following") => {
+    setFeedTab((current) => {
+      if (current !== tab) { setDir(1); setIdx(0); }
+      return tab;
+    });
+  }, []);
 
   const wheelLocked = useRef(false);
   const handleWheel = useCallback((e: React.WheelEvent) => {
@@ -724,15 +741,16 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [goNext, goPrev]);
 
-  const handleLogout = useCallback(() => { setIsLoggedIn(false); setScreen("feed"); }, []);
-  const handleDeleted = useCallback(() => { setShowDeleteModal(false); setIsLoggedIn(false); setScreen("feed"); }, []);
+  const handleLogout = useCallback(() => { endSession(); setAccount(null); setScreen("feed"); }, []);
+  // `deleteAccount` has already ended the session by the time this runs.
+  const handleDeleted = useCallback(() => { setShowDeleteModal(false); setAccount(null); setScreen("feed"); }, []);
 
-  if (!isLoggedIn) {
+  if (!account) {
     return (
       <ThemeContext.Provider value={true}>
         <div className="h-[100dvh] w-full overflow-hidden" style={{ background: "#000" }}>
           <div className={`${FRAME} bg-black`}>
-            <AuthFlow onAuthenticated={() => setIsLoggedIn(true)} />
+            <AuthFlow onAuthenticated={setAccount} />
           </div>
         </div>
       </ThemeContext.Provider>
@@ -766,15 +784,31 @@ export default function App() {
               <div className="absolute inset-0" style={{ background: "linear-gradient(to bottom,rgba(0,0,0,0.25) 0%,transparent 25%,transparent 55%,rgba(0,0,0,0.65) 80%,rgba(0,0,0,0.85) 100%)" }} />
 
               {/* Top bar */}
-              <div className="absolute top-0 inset-x-0 flex items-center justify-between px-5 pt-12 z-10">
+              <div className="absolute top-0 inset-x-0 flex items-center justify-between px-5 pt-12 z-10"
+                onClick={(e) => e.stopPropagation()}>
                 <div className="flex gap-5">
-                  <button className="text-white/60 text-[14px] font-semibold">Following</button>
-                  <div className="flex flex-col items-center">
-                    <button className="text-white text-[14px] font-bold">For You</button>
-                    <div className="w-5 h-0.5 rounded-full mt-0.5" style={{ background: "#00AEEF" }} />
-                  </div>
+                  {([
+                    { id: "following", label: "Following" },
+                    { id: "forYou", label: "For You" },
+                  ] as const).map((tab) => (
+                    <div key={tab.id} className="flex flex-col items-center">
+                      <button onClick={() => switchTab(tab.id)}
+                        className="text-[14px]"
+                        style={{
+                          color: feedTab === tab.id ? "#fff" : "rgba(255,255,255,0.6)",
+                          fontWeight: feedTab === tab.id ? 700 : 600,
+                        }}>
+                        {tab.label}
+                      </button>
+                      {feedTab === tab.id && (
+                        <motion.div layoutId="feed-tab-underline" className="w-5 h-0.5 rounded-full mt-0.5"
+                          style={{ background: "#00AEEF" }} />
+                      )}
+                    </div>
+                  ))}
                 </div>
-                <button className="w-8 h-8 rounded-full flex items-center justify-center"
+                <button onClick={() => setScreen("discover")} aria-label="Search"
+                  className="w-8 h-8 rounded-full flex items-center justify-center"
                   style={{ background: "rgba(255,255,255,0.1)", backdropFilter: "blur(8px)" }}>
                   <Search className="w-4 h-4 text-white" />
                 </button>
@@ -791,7 +825,7 @@ export default function App() {
                 )}
               </AnimatePresence>
 
-              {idx < VIDEOS.length - 1 && (
+              {idx < feed.length - 1 && (
                 <div className="absolute bottom-36 right-1/2 translate-x-1/2 z-10 flex flex-col items-center gap-0.5 opacity-40">
                   <ChevronUp className="w-4 h-4 text-white" />
                 </div>
@@ -808,7 +842,7 @@ export default function App() {
 
               {/* Progress dots */}
               <div className="absolute right-4 top-1/2 -translate-y-1/2 flex flex-col gap-1.5 z-10">
-                {VIDEOS.map((v, i) => (
+                {feed.map((v, i) => (
                   <button key={v.id}
                     onClick={(e) => { e.stopPropagation(); setDir(i > idx ? 1 : -1); setIdx(i); }}
                     className="rounded-full transition-all"
@@ -849,9 +883,11 @@ export default function App() {
             {screen === "profile" && (
               <motion.div key="settings" initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }} transition={{ type: "spring", damping: 34, stiffness: 300 }}>
                 <SettingsScreen
+                  account={account}
                   onBack={() => setScreen("feed")}
                   onLogout={handleLogout}
                   onDeleteProfile={() => setShowDeleteModal(true)}
+                  onAccountChange={setAccount}
                   isDark={isDark}
                   onToggleTheme={() => setIsDark((d) => !d)}
                 />
@@ -866,7 +902,7 @@ export default function App() {
                 <motion.div key="del-bd" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                   className="absolute inset-0 z-40" style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(6px)" }}
                   onClick={() => setShowDeleteModal(false)} />
-                <DeleteProfileModal key="del-modal" onDeleted={handleDeleted} onCancel={() => setShowDeleteModal(false)} />
+                <DeleteProfileModal key="del-modal" account={account} onDeleted={handleDeleted} onCancel={() => setShowDeleteModal(false)} />
               </>
             )}
           </AnimatePresence>
