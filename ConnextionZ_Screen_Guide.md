@@ -634,39 +634,70 @@ Each collab type card has a unique coloured border:
 
 ---
 
-## Settings / Profile (`src/app/Auth.tsx → SettingsScreen`)
+## Settings / Profile (`src/app/Settings.tsx → SettingsScreen`)
 
 ```
 ┌─────────────────────────────┐
 │  ← Settings                 │
 │                             │
-│  [Avatar]  @username        │  ← Profile header: avatar, username, collab score
-│  ⭐ 4.8  312 collabs        │
+│  [Avatar]  @username     →  │  ← Profile card — taps through to Edit Profile
+│  ⭐ 4.8 · 312 collabs       │
+│                             │
+│  Appearance                 │
+│  ─ 🌙 Dark Mode      [on]  │  ← Theme switch
 │                             │
 │  Account                    │  ← Section header
-│  ─ Edit Profile      →     │  ← Row with right chevron
-│  ─ Notifications     →     │
-│  ─ Privacy           →     │
+│  ─ Edit Profile          →  │  ← Row with right chevron + current value
+│  ─ Change Password       →  │
+│  ─ Notification Prefs    →  │
+│  ─ Privacy Settings Public→ │
 │                             │
-│  Collaboration              │  ← Section header
-│  ─ Collab Status     →     │
-│  ─ Response Time     →     │
-│  ─ Portfolio         →     │
+│  Creator                    │
+│  ─ Collab Preferences    →  │
+│  ─ Response Time  <4 hrs →  │
+│  ─ Portfolio          3  →  │
+│  ─ Analytics             →  │
 │                             │
 │  Support                    │
-│  ─ Help Center       →     │
-│  ─ Report a Problem  →     │
+│  ─ Help Center           →  │
+│  ─ Report a Problem      →  │
+│  ─ Terms of Service      →  │
+│  ─ Privacy Policy        →  │
 │                             │
-│  ─ Log Out               ←  │  ← Red destructive row
-│  ─ Delete Profile        ←  │  ← Red destructive row
+│  ─ Log Out               →  │
+│  ─ Delete Profile        →  │  ← Red destructive row
 └─────────────────────────────┘
 ```
 
 **Distinct Components**
-- **Profile header block** — avatar, username, collab score pill
+- **Profile card** — avatar (user's chosen colour), @username, email, collab score pill; the whole card is the Edit Profile tap target
 - **Section labels** — uppercase muted category separators
-- **Row items** — full-width tap targets with right chevron (→)
+- **Row items** — full-width tap targets with a right chevron and, where useful, the current value inline
 - **Destructive rows** — Log Out and Delete Profile in `#ef4444` red
+- **`SavedPill`** — transient "Preferences saved" toast; preference screens write on every tap rather than behind a Save button
+
+### Destination screens (`src/app/SettingsPages.tsx`)
+
+Every row above pushes onto a route stack rendered over the list (`x: "100%" → 0`,
+spring damping 34). Back pops one level, so cross-links return to where you came from.
+
+| Route | Screen | What it does |
+|---|---|---|
+| `editProfile` | Edit Profile | Avatar colour, display name, @username, bio, location, website; validates and persists via `updateProfile` |
+| `changePassword` | Change Password | Current + new + confirm with a live requirements checklist; provider-only accounts get a "Set a Password" variant |
+| `notifications` | Notification Preferences | Collaboration / Activity / Discovery toggles, email digest cadence, quiet hours |
+| `privacy` | Privacy Settings | Private account, who-can-message, who-can-collab, visibility toggles, discoverability |
+| `collabPreferences` | Collab Preferences | Open-to-collab, collab types, typical budget, categories, auto-screening + minimum Collab Score |
+| `responseTime` | Response Time | Single-select with a live preview of how the profile will read |
+| `portfolio` | Portfolio | Add / remove / feature work, with an empty state |
+| `analytics` | Analytics | Four stat tiles, a single-series weekly views bar chart, ranked collab-request types, funnel |
+| `helpCenter` | Help Center | Searchable FAQ accordion, cross-links to Report a Problem and the legal docs |
+| `reportProblem` | Report a Problem | Topic choice, description, contact email, submitted confirmation |
+| `terms` / `privacyPolicy` | Legal | Sectioned prose rendered from a `LegalDoc` shape |
+
+**Persistence** — profile fields live on the `Account` in `auth-store.ts`; everything
+else is per-account in `settings-store.ts`. Onboarding seeds both, so a new user's
+Settings opens already reflecting their picks.
 
 ---
 
@@ -701,6 +732,9 @@ delete your account…             └──────────────
 | Collab button reappear | After gone phase | Scale spring `[0, 1.35, 1]` |
 | Sheet slide-in | Open action | `y: "100%" → 0`, spring damping 34 |
 | Screen slide-in | Nav switch | `x: "100%" → 0`, spring damping 34 |
+| Settings push | Tap a settings row | `SubPage` slides in over the list, spring damping 34 |
+| Feed tab underline | For You ↔ Following | `layoutId="feed-tab-underline"` shared layout |
+| Saved pill | Change a preference | Spring scale + rise, auto-dismiss after 1.4s |
 | Pause indicator | Tap feed | Scale + opacity fade in/out |
 | Like heart pop | Tap like | `scale: [1, 1.35, 1]` |
 | Floating hearts (Live) | Tap live like | Staggered upward translate + opacity |
@@ -718,8 +752,13 @@ delete your account…             └──────────────
 ```
 src/
 ├── app/
-│   ├── App.tsx          Main feed, routing, all sheets, BottomNav
-│   ├── Auth.tsx         AuthFlow, SettingsScreen, DeleteProfileModal
+│   ├── App.tsx          Main feed, routing, all sheets, BottomNav, session
+│   ├── Auth.tsx         AuthFlow — Get Started, Login, Create Account, reset, Onboarding
+│   ├── auth-store.ts    Accounts, session, profile, password reset & change (prototype stub)
+│   ├── Settings.tsx     SettingsScreen (list + route stack), DeleteProfileModal
+│   ├── SettingsPages.tsx  The 12 settings destinations + the route table
+│   ├── settings-ui.tsx  SubPage shell, Group/Row/ToggleRow/ChoiceRow, Field, tokens
+│   ├── settings-store.ts  Per-account preferences (notifications, privacy, collab, portfolio)
 │   ├── TrendingSounds.tsx  Discover tab, SoundDetail, VideoViewer
 │   ├── LiveStream.tsx   GoLiveSetup, CreatorLiveView, ViewerLiveView, LiveBannerStrip
 │   └── Inbox.tsx        InboxScreen, RequestCard, DMThread, CelebrationOverlay
