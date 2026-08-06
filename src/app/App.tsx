@@ -5,12 +5,14 @@ import { SettingsScreen, DeleteProfileModal } from "./Settings";
 import { type Account, getSession, endSession } from "./auth-store";
 import { GoLiveSetup, CreatorLiveView, ViewerLiveView, LiveBannerStrip } from "./LiveStream";
 import { InboxScreen } from "./Inbox";
+import { HoloProfile } from "./HoloProfile";
+import { MetaverseHub } from "./Metaverse";
 import { ThemeContext, useTheme } from "./ThemeContext";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Heart, MessageCircle, Bookmark, Music,
   Home, Search, Plus, Mail, User, X, Send, Check,
-  ChevronUp, ChevronDown, Navigation,
+  ChevronUp, ChevronDown, Navigation, Globe,
 } from "lucide-react";
 
 // ─── DATA ────────────────────────────────────────────────────────────────────
@@ -782,7 +784,7 @@ export default function App() {
   // The signed-in account, restored from the persisted session on load.
   const [account, setAccount] = useState<Account | null>(() => getSession());
   const [isDark, setIsDark] = useState(true);
-  const [screen, setScreen] = useState<"feed" | "discover" | "profile" | "inbox">("feed");
+  const [screen, setScreen] = useState<"feed" | "discover" | "profile" | "inbox" | "holoprofile" | "metaverse">("feed");
   const [feedTab, setFeedTab] = useState<"forYou" | "following">("forYou");
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [liveMode, setLiveMode] = useState<"off" | "setup" | "creator" | "viewer">("off");
@@ -979,7 +981,32 @@ export default function App() {
             </motion.div>
             )}
           </AnimatePresence>
-
+          {/* ── Metaverse portal orb ── */}
+          <AnimatePresence>
+            {screen === "feed" && (
+              <motion.button
+                key="metaverse-orb"
+                initial={{ opacity: 0, scale: 0.6 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.6 }}
+                whileHover={{ scale: 1.12 }}
+                whileTap={{ scale: 0.9 }}
+                onClick={() => setScreen("metaverse")}
+                className="absolute z-20 flex flex-col items-center gap-1"
+                style={{ bottom: 88, right: 16 }}
+              >
+                <motion.div
+                  animate={{ boxShadow: ["0 0 14px rgba(124,58,237,0.5)", "0 0 28px rgba(0,174,239,0.7)", "0 0 14px rgba(124,58,237,0.5)"] }}
+                  transition={{ duration: 2.5, repeat: Infinity }}
+                  className="w-12 h-12 rounded-full flex items-center justify-center"
+                  style={{ background: "linear-gradient(135deg,#7c3aed,#00AEEF)" }}
+                >
+                  <Globe className="w-5 h-5 text-white" />
+                </motion.div>
+                <span className="text-[9px] font-bold tracking-wider" style={{ color: "#00AEEF" }}>METAVERSE</span>
+              </motion.button>
+            )}
+          </AnimatePresence>
           {/* ── Bottom nav ── */}
           <BottomNav
             active={screen === "discover" ? "search" : screen === "profile" ? "profile" : screen === "inbox" ? "inbox" : "home"}
@@ -1021,7 +1048,30 @@ export default function App() {
                   onAccountChange={setAccount}
                   isDark={isDark}
                   onToggleTheme={() => setIsDark((d) => !d)}
+                  onOpenHoloProfile={() => setScreen("holoprofile")}
                 />
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* ── Holo Profile ── pushed from Settings, so Back returns there */}
+          <AnimatePresence>
+            {screen === "holoprofile" && (
+              <motion.div key="holoprofile" className="absolute inset-0 z-40 overflow-y-auto"
+                initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.96 }}
+                transition={{ duration: 0.3 }}>
+                <HoloProfile onBack={() => setScreen("profile")} />
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* ── Metaverse ── entered from the feed orb */}
+          <AnimatePresence>
+            {screen === "metaverse" && (
+              <motion.div key="metaverse" className="absolute inset-0 z-40"
+                initial={{ opacity: 0, scale: 1.04 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 1.04 }}
+                transition={{ duration: 0.35 }}>
+                <MetaverseHub onBack={() => setScreen("feed")} />
               </motion.div>
             )}
           </AnimatePresence>
