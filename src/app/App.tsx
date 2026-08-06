@@ -120,7 +120,7 @@ const SEED_COMMENTS: Record<string, Comment[]> = {
   ],
 };
 
-/** Creators the signed-in user follows — what the Following tab narrows to. */
+/** Creators the signed-in user already follows when the app opens. */
 const FOLLOWING_IDS = ["1", "3", "5"];
 
 const fmt = (n: number) =>
@@ -436,21 +436,113 @@ function ShareSheet({ video, onClose }: { video: typeof VIDEOS[0]; onClose: () =
   );
 }
 
+// ─── FOLLOW BUTTON ────────────────────────────────────────────────────────────
+
+/**
+ * The avatar badge in the action rail. One tap toggles the follow and the badge
+ * answers on the spot: the `+` flips to a check, the fill drops from brand blue
+ * to neutral glass, a ring pulses out of it and a "Following" chip slides in —
+ * so the state change is confirmed before the caller's state even matters.
+ */
+function FollowButton({
+  username, avatarUrl, following, onToggle,
+}: {
+  username: string; avatarUrl: string; following: boolean; onToggle: () => void;
+}) {
+  // Bumped on each *follow* tap; drives the one-shot ring + chip, then resets.
+  // A counter rather than a boolean so re-following replays the burst cleanly.
+  const [burst, setBurst] = useState(0);
+
+  useEffect(() => {
+    if (!burst) return;
+    const t = setTimeout(() => setBurst(0), 1500);
+    return () => clearTimeout(t);
+  }, [burst]);
+
+  const handleClick = (e: React.MouseEvent) => {
+    // The slide behind the rail toggles play/pause on click — don't pause too.
+    e.stopPropagation();
+    setBurst((b) => (following ? 0 : b + 1));
+    onToggle();
+  };
+
+  return (
+    <div className="relative mb-1">
+      <img src={avatarUrl} alt={username}
+        className="w-11 h-11 rounded-full object-cover border-2 transition-colors"
+        style={{ borderColor: following ? "#00AEEF" : "#fff" }} />
+
+      {/* Badge anchor — the offset lives here so motion's transforms stay free. */}
+      <div className="absolute -bottom-2 left-1/2 -translate-x-1/2">
+        {/* Shockwave confirming the tap */}
+        <AnimatePresence>
+          {burst > 0 && (
+            <motion.span key={`ring-${burst}`} initial={{ scale: 0.5, opacity: 0.9 }} animate={{ scale: 2.8, opacity: 0 }}
+              exit={{ opacity: 0 }} transition={{ duration: 0.5, ease: "easeOut" }}
+              className="absolute inset-0 rounded-full pointer-events-none"
+              style={{ border: "2px solid #00AEEF" }} />
+          )}
+        </AnimatePresence>
+
+        <motion.button type="button" onClick={handleClick}
+          aria-pressed={following}
+          aria-label={following ? `Unfollow ${username}` : `Follow ${username}`}
+          title={following ? "Following" : "Follow"}
+          whileHover={{ scale: 1.18 }} whileTap={{ scale: 0.8 }}
+          transition={{ type: "spring", stiffness: 520, damping: 22 }}
+          className="relative w-5 h-5 rounded-full flex items-center justify-center cursor-pointer"
+          style={{
+            background: following ? "rgba(255,255,255,0.18)" : "#00AEEF",
+            border: following ? "1px solid rgba(255,255,255,0.6)" : "none",
+            backdropFilter: following ? "blur(8px)" : "none",
+            boxShadow: following ? "none" : "0 2px 8px rgba(0,174,239,0.5)",
+            transitionProperty: "background, box-shadow, border-color",
+            transitionDuration: "0.2s",
+          }}>
+          {/* Icons swap simultaneously (no `mode="wait"`) so the glyph turns over
+              on the same frame as the tap rather than a beat behind it. */}
+          <AnimatePresence initial={false}>
+            <motion.span key={following ? "check" : "plus"}
+              initial={{ scale: 0, rotate: following ? -120 : 120, opacity: 0 }}
+              animate={{ scale: 1, rotate: 0, opacity: 1 }}
+              exit={{ scale: 0, opacity: 0 }}
+              transition={{ duration: 0.2, ease: [0.17, 0.89, 0.32, 1.28] }}
+              className="absolute inset-0 flex items-center justify-center">
+              {following
+                ? <Check className="w-3 h-3 text-white" strokeWidth={3.5} />
+                : <Plus className="w-3 h-3 text-white" strokeWidth={3.5} />}
+            </motion.span>
+          </AnimatePresence>
+        </motion.button>
+
+        {/* Word-level confirmation, left of the rail so it can't clip off-screen */}
+        <AnimatePresence>
+          {burst > 0 && following && (
+            <motion.span key="chip" initial={{ opacity: 0, x: 10, scale: 0.85 }} animate={{ opacity: 1, x: 0, scale: 1 }}
+              exit={{ opacity: 0, x: 10, scale: 0.85 }} transition={{ type: "spring", stiffness: 420, damping: 26 }}
+              className="absolute whitespace-nowrap px-2 py-0.5 rounded-full text-[10px] font-bold text-white pointer-events-none"
+              style={{ right: "calc(100% + 8px)", top: 0, background: "#00AEEF", boxShadow: "0 2px 10px rgba(0,174,239,0.5)" }}>
+              Following
+            </motion.span>
+          )}
+        </AnimatePresence>
+      </div>
+    </div>
+  );
+}
+
 // ─── ACTION RAIL ──────────────────────────────────────────────────────────────
 
 function ActionRail({
-  video, liked, saved, onLike, onSave, onCollab, onComment, onShare,
+  video, liked, saved, following, onFollow, onLike, onSave, onCollab, onComment, onShare,
 }: {
-  video: typeof VIDEOS[0]; liked: boolean; saved: boolean;
+  video: typeof VIDEOS[0]; liked: boolean; saved: boolean; following: boolean;
+  onFollow: () => void;
   onLike: () => void; onSave: () => void; onCollab: () => void; onComment: () => void; onShare: () => void;
 }) {
   return (
     <div className="flex flex-col items-center gap-5 absolute right-3 bottom-28 z-10">
-      <div className="relative mb-1">
-        <img src={video.avatarUrl} alt={video.username} className="w-11 h-11 rounded-full object-cover border-2 border-white" />
-        <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-5 h-5 rounded-full flex items-center justify-center text-white text-xs font-bold"
-          style={{ background: "#00AEEF", boxShadow: "0 2px 8px rgba(0,174,239,0.5)" }}>+</div>
-      </div>
+      <FollowButton username={video.username} avatarUrl={video.avatarUrl} following={following} onToggle={onFollow} />
       <motion.button whileTap={{ scale: 0.85 }} onClick={onLike} className="flex flex-col items-center gap-1">
         <motion.div animate={liked ? { scale: [1, 1.35, 1] } : {}} transition={{ duration: 0.25 }}>
           <Heart className={`w-7 h-7 drop-shadow-lg ${liked ? "fill-red-500 text-red-500" : "text-white"}`} />
@@ -699,6 +791,9 @@ export default function App() {
   const [dir, setDir] = useState(1);
   const [liked, setLiked] = useState<Record<string, boolean>>({});
   const [saved, setSaved] = useState<Record<string, boolean>>({});
+  const [following, setFollowing] = useState<Record<string, boolean>>(
+    () => Object.fromEntries(FOLLOWING_IDS.map((id) => [id, true]))
+  );
   const [collabTarget, setCollabTarget] = useState<typeof VIDEOS[0] | null>(null);
   const [commentTarget, setCommentTarget] = useState<typeof VIDEOS[0] | null>(null);
   const [shareTarget, setShareTarget] = useState<typeof VIDEOS[0] | null>(null);
@@ -710,8 +805,18 @@ export default function App() {
 
   // The two top-bar tabs are the same feed filtered, so switching them restarts
   // at the first video rather than leaving `idx` past the end of a shorter list.
-  const feed = feedTab === "following" ? VIDEOS.filter((v) => FOLLOWING_IDS.includes(v.id)) : VIDEOS;
-  const video = feed[Math.min(idx, feed.length - 1)];
+  // Following reads live follow state, so a tap on the rail badge re-filters it.
+  const feed = feedTab === "following" ? VIDEOS.filter((v) => following[v.id]) : VIDEOS;
+  const video = feed.length > 0 ? feed[Math.min(idx, feed.length - 1)] : undefined;
+
+  // Unfollowing from the Following tab can shrink the feed out from under `idx`.
+  useEffect(() => {
+    if (feed.length > 0 && idx > feed.length - 1) setIdx(feed.length - 1);
+  }, [feed.length, idx]);
+
+  const toggleFollow = useCallback((id: string) => {
+    setFollowing((f) => ({ ...f, [id]: !f[id] }));
+  }, []);
 
   const goNext = useCallback(() => { if (idx < feed.length - 1) { setDir(1); setIdx((i) => i + 1); } }, [idx, feed.length]);
   const goPrev = useCallback(() => { if (idx > 0) { setDir(-1); setIdx((i) => i - 1); } }, [idx]);
@@ -770,8 +875,59 @@ export default function App() {
           onTouchEnd={(e) => { const d = touchStartY.current - e.changedTouches[0].clientY; if (Math.abs(d) > 45) d > 0 ? goNext() : goPrev(); }}
           onWheel={handleWheel}
         >
+          {/* ── Top bar ── sits above the slides so it survives an empty feed */}
+          <div className="absolute top-0 inset-x-0 flex items-center justify-between px-5 pt-12 z-20"
+            onClick={(e) => e.stopPropagation()}>
+            <div className="flex gap-5">
+              {([
+                { id: "following", label: "Following" },
+                { id: "forYou", label: "For You" },
+              ] as const).map((tab) => (
+                <div key={tab.id} className="flex flex-col items-center">
+                  <button onClick={() => switchTab(tab.id)}
+                    className="text-[14px]"
+                    style={{
+                      color: feedTab === tab.id ? "#fff" : "rgba(255,255,255,0.6)",
+                      fontWeight: feedTab === tab.id ? 700 : 600,
+                    }}>
+                    {tab.label}
+                  </button>
+                  {feedTab === tab.id && (
+                    <motion.div layoutId="feed-tab-underline" className="w-5 h-0.5 rounded-full mt-0.5"
+                      style={{ background: "#00AEEF" }} />
+                  )}
+                </div>
+              ))}
+            </div>
+            <button onClick={() => setScreen("discover")} aria-label="Search"
+              className="w-8 h-8 rounded-full flex items-center justify-center"
+              style={{ background: "rgba(255,255,255,0.1)", backdropFilter: "blur(8px)" }}>
+              <Search className="w-4 h-4 text-white" />
+            </button>
+          </div>
+
+          {/* ── Empty Following feed — every creator has been unfollowed ── */}
+          {!video && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-10 text-center z-10">
+              <div className="w-14 h-14 rounded-full flex items-center justify-center"
+                style={{ background: "rgba(0,174,239,0.15)", border: "1px solid rgba(0,174,239,0.4)" }}>
+                <User className="w-6 h-6" style={{ color: "#00AEEF" }} />
+              </div>
+              <p className="font-bold text-[16px]" style={{ color: isDark ? "#fff" : "#0a0e1a" }}>Nothing here yet</p>
+              <p className="text-[13px] leading-snug" style={{ color: isDark ? "rgba(255,255,255,0.55)" : "rgba(10,14,26,0.55)" }}>
+                Follow a few creators and their posts will show up in this tab.
+              </p>
+              <button onClick={() => switchTab("forYou")}
+                className="mt-1 px-4 py-2 rounded-full text-[13px] font-bold text-white"
+                style={{ background: "linear-gradient(135deg,#00AEEF,#0077cc)", boxShadow: "0 6px 18px rgba(0,174,239,0.35)" }}>
+                Browse For You
+              </button>
+            </div>
+          )}
+
           {/* ── Video slides ── */}
           <AnimatePresence initial={false} custom={dir} mode="wait">
+            {video && (
             <motion.div key={video.id} custom={dir}
               initial={{ y: dir > 0 ? "100%" : "-100%", opacity: 0.4 }}
               animate={{ y: 0, opacity: 1 }}
@@ -782,37 +938,6 @@ export default function App() {
             >
               <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: `url(${video.thumbnail})` }} />
               <div className="absolute inset-0" style={{ background: "linear-gradient(to bottom,rgba(0,0,0,0.25) 0%,transparent 25%,transparent 55%,rgba(0,0,0,0.65) 80%,rgba(0,0,0,0.85) 100%)" }} />
-
-              {/* Top bar */}
-              <div className="absolute top-0 inset-x-0 flex items-center justify-between px-5 pt-12 z-10"
-                onClick={(e) => e.stopPropagation()}>
-                <div className="flex gap-5">
-                  {([
-                    { id: "following", label: "Following" },
-                    { id: "forYou", label: "For You" },
-                  ] as const).map((tab) => (
-                    <div key={tab.id} className="flex flex-col items-center">
-                      <button onClick={() => switchTab(tab.id)}
-                        className="text-[14px]"
-                        style={{
-                          color: feedTab === tab.id ? "#fff" : "rgba(255,255,255,0.6)",
-                          fontWeight: feedTab === tab.id ? 700 : 600,
-                        }}>
-                        {tab.label}
-                      </button>
-                      {feedTab === tab.id && (
-                        <motion.div layoutId="feed-tab-underline" className="w-5 h-0.5 rounded-full mt-0.5"
-                          style={{ background: "#00AEEF" }} />
-                      )}
-                    </div>
-                  ))}
-                </div>
-                <button onClick={() => setScreen("discover")} aria-label="Search"
-                  className="w-8 h-8 rounded-full flex items-center justify-center"
-                  style={{ background: "rgba(255,255,255,0.1)", backdropFilter: "blur(8px)" }}>
-                  <Search className="w-4 h-4 text-white" />
-                </button>
-              </div>
 
               <AnimatePresence>
                 {paused && (
@@ -832,6 +957,8 @@ export default function App() {
               )}
 
               <ActionRail video={video} liked={!!liked[video.id]} saved={!!saved[video.id]}
+                following={!!following[video.id]}
+                onFollow={() => toggleFollow(video.id)}
                 onLike={() => setLiked((l) => ({ ...l, [video.id]: !l[video.id] }))}
                 onSave={() => setSaved((s) => ({ ...s, [video.id]: !s[video.id] }))}
                 onCollab={() => setCollabTarget(video)}
@@ -850,6 +977,7 @@ export default function App() {
                 ))}
               </div>
             </motion.div>
+            )}
           </AnimatePresence>
 
           {/* ── Bottom nav ── */}
@@ -871,8 +999,10 @@ export default function App() {
 
           {/* ── Inbox ── */}
           <AnimatePresence>
+            {/* z-30 clears the feed's top bar, which is a positive-z sibling. */}
             {screen === "inbox" && (
-              <motion.div key="inbox" initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }} transition={{ type: "spring", damping: 34, stiffness: 300 }}>
+              <motion.div key="inbox" className="absolute inset-0 z-30"
+                initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }} transition={{ type: "spring", damping: 34, stiffness: 300 }}>
                 <InboxScreen onBack={() => setScreen("feed")} />
               </motion.div>
             )}
@@ -881,7 +1011,8 @@ export default function App() {
           {/* ── Profile / Settings ── */}
           <AnimatePresence>
             {screen === "profile" && (
-              <motion.div key="settings" initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }} transition={{ type: "spring", damping: 34, stiffness: 300 }}>
+              <motion.div key="settings" className="absolute inset-0 z-30"
+                initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }} transition={{ type: "spring", damping: 34, stiffness: 300 }}>
                 <SettingsScreen
                   account={account}
                   onBack={() => setScreen("feed")}
